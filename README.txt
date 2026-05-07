@@ -1,5 +1,5 @@
-A platform to learn languages by speaking using an LLM pipeline with memory rather than hardcoded learning paths 
-git
+A platform to learn languages by speaking using an agentic pipeline with memory and tooling rather than hardcoded learning paths 
+like on duolingo. we also skip straight to speaking because that is the most practical way to learn a language
 
 
 
