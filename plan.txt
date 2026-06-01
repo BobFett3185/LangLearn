@@ -1,0 +1,18 @@
+Phase 1 — Terminal (build this first)
+
+ Groq Whisper (done)
+
+Orchestrator agent with tool calling
+
+SQLite memory DB + tools
+ElevenLabs TTS
+Wire it all together into one terminal loop
+
+By the end of this you have a fully working Hindi tutor you can use in the terminal — speak, get feedback, progress tracked. Ugly but functional.
+
+Phase 2 — Web App
+
+FastAPI backend wrapping everything
+Simple frontend — React or just HTML/JS
+Voice recording in the browser (WebAudio API)
+Nice UI — phrase display, progress, feedback animations
