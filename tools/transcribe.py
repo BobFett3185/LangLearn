@@ -10,10 +10,10 @@ client = Groq(
 )
 
 
-
-
 # load an audio file for testing
-filename = os.path.dirname(__file__) + "/audiofiles/test2.m4a"
+filename = r"C:\Users\kdfer\Desktop\CSProjects\LangLearn\LangLearn\audiofiles\test2.m4a"
+#filename = os.path.dirname(__file__) + "/audiofiles/test2.m4a"
+print(f"Using audio file: {filename}")
 
 
 # function for transrbing and translating audio using the Groq API
@@ -43,9 +43,8 @@ def transcribe_and_translate_audio(filename):
         )
     return translation.text, transcription.text
 
-'''
-    translation, transcription = transcribe_and_translate_audio(filename)
-    print(f"Transcription: {transcription}")
-    print(f"Translation: {translation}")
+translation, transcription = transcribe_and_translate_audio(filename)
+print(f"Transcription: {transcription}")
+print(f"Translation: {translation}")
 
-'''
+

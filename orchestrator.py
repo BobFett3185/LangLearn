@@ -11,7 +11,7 @@ client = Groq(
 
 
 
-query = input("Enter your query: ")
+query = input("Say hi to start the conversation with your Hindi tutor! ")
 
 response = client.chat.completions.create(
     messages=[
@@ -24,6 +24,14 @@ response = client.chat.completions.create(
                 "Evaluate Mode — after every attempt call the appropriate evaluation tool to grade the response. If correct call save_progress and move on. If close retry by calling speak_phrase again. If completely wrong call teach_phrase to reteach with a full breakdown, then retry. Use the grade_pronunciation tool to evaluate pronunciation and correctness of the user's spoken response to a question."
                 "Rules you must always follow:  Always call a tool, never respond with plain text , Always call get_memory before deciding what to teach or ask, Always call save_progress after every evaluation"
                 "Focus entirely on spoken language, never ask the student to type in Hindi. Assume the student is an absolute beginner unless memory says otherwise. Be encouraging, patient, and specific in feedback"
+
+                "Other relevant intructions:"
+            
+                "The FIRST tool you must ALWAYS call is get_memory.Never call any other tool before get_memory. Once you call get_memory you MUST call another tool to continue the learning"
+
+                "When you call get_memory, use the returned information to decide what to teach or ask next. If the student's memory shows they are a beginner with no learned phrases, start with teaching a simple phrase. If they have some learned phrases, use that information to either teach a new phrase at the right level or generate an appropriate question. Always tailor your teaching and questions to the student's current knowledge as shown in their memory."
+                "When evaluating responses, use the information in memory about the student's status on that word to provide feedback. For example, if memory shows the student struggles with saying phrase xyz, focus your feedback on that phrase(s) and consider reteaching with speak_phrase before asking them to try again."
+
         },
 
         {
@@ -118,13 +126,9 @@ response = client.chat.completions.create(
                             "type": "string",
                             "description": "The phrase being spoken for the user to hear"
                         },
-                        "status": {
-                            "type": "string",
-                            "enum": ["learned", "needs_review", "not_learned"],
-                            "description": "The learning status of the phrase"
-                        }
+                        
                     },
-                    "required": ["phrase", "status"]
+                    "required": ["phrase"]
                 }
             }
         }, #------------------------------------------------------------
@@ -142,14 +146,10 @@ response = client.chat.completions.create(
                             "type": "string",
                             "description": "The phrase which the user will be asked to speak back in Hindi"
                         },
-                        "status": {
-                            "type": "string",
-                            "enum": ["learned", "needs_review", "not_learned"],
-                            "description": "The learning status of the phrase"
-                        },
+                        
                         
                     },
-                    "required": ["phrase", "status"]
+                    "required": ["phrase"]
                 }
             }
         }, #------------------------------------------------------------
@@ -167,13 +167,9 @@ response = client.chat.completions.create(
                             "type": "string",
                             "description": "The Hindi phrase being spoken for the user to listen to and respond in English"
                         },
-                        "status": {
-                            "type": "string",
-                            "enum": ["learned", "needs_review", "not_learned"],
-                            "description": "The learning status of the phrase"
-                        },
+                        
                     },
-                    "required": ["phrase", "status"]
+                    "required": ["phrase"]
                 }
             }
         }, #------------------------------------------------------------
@@ -264,7 +260,8 @@ response = client.chat.completions.create(
 
     #optional parameters
     temperature=0.7,
-    stream=True,
+    tool_choice = "required", # require the model to call a tool at every step, no plain text responses allowed
+   # stream=True,
 
 )
 ''' Print the incremental deltas returned by the LLM.
@@ -275,5 +272,32 @@ for chunk in stream:
     dont print in stream just do all at once lol
 
 '''
-print(response.choices[0].message.content)
+toolcalls = response.choices[0].message.tool_calls
+print(toolcalls)
+
+
+
+
+from tools import(get_memory, save_progress, teach_phrase, speak_phrase, generate_speaking_question, 
+                  generate_listening_question, evaluate_speaking_question, evaluate_listening_question)
+
+def handle_tool_call(tool_name, tool_args):
+    if tool_name == "get_memory":
+        return get_memory(**tool_args)
+    elif tool_name == "save_progress":
+        return save_progress(**tool_args)
+    elif tool_name == "teach_phrase":
+        return teach_phrase(**tool_args)
+    elif tool_name == "speak_phrase":
+        return speak_phrase(**tool_args)
+    elif tool_name == "generate_speaking_question":
+        return generate_speaking_question(**tool_args)
+    elif tool_name == "generate_listening_question":
+        return generate_listening_question(**tool_args)
+    elif tool_name == "evaluate_speaking_question":
+        return evaluate_speaking_question(**tool_args)
+    elif tool_name == "evaluate_listening_question":
+        return evaluate_listening_question(**tool_args)
+
+    
 
