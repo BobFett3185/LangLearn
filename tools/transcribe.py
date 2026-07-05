@@ -1,50 +1,58 @@
 import os
-import dotenv
-from httpx import stream
-from groq import Groq
+from pathlib import Path
+
 from dotenv import load_dotenv
+from groq import Groq
+
+
 load_dotenv()
 
-client = Groq(
-    api_key=os.getenv("GROQ_API_KEY"),
-)
+
+def _client():
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        return None
+    return Groq(api_key=api_key)
+
 
 def transcribe_user_response(filename):
-    # load an audio file for testing
-    filename = r"C:\Users\kdfer\Desktop\CSProjects\LangLearn\LangLearn\audiofiles\test2.m4a"
-    #filename = os.path.dirname(__file__) + "/audiofiles/test2.m4a"
-    print(f"Using audio file: {filename}")
+    path = Path(filename).expanduser()
+    if not path.exists():
+        return {
+            "ok": False,
+            "error": f"Audio file not found: {path}",
+            "translation": "",
+            "transcription": "",
+        }
 
+    client = _client()
+    if client is None:
+        return {
+            "ok": False,
+            "error": "GROQ_API_KEY is not set",
+            "translation": "",
+            "transcription": "",
+        }
 
-    # function for transrbing and translating audio using the Groq API
-    def transcribe_and_translate_audio(filename):
-        with open(filename, "rb") as f:
-            translation = client.audio.translations.create(
-            
-                model="whisper-large-v3",
-                file=(filename, f.read()), # Required audio file
-                prompt="this is a hindi phrase, translate it to english, and critique on pronunciation and correctness.",  # Optional
-            # language="hi", # Optional ('en' only)
-                response_format="json",  # Optional
-            # temperature=0.0  # Optiona
+    with path.open("rb") as f:
+        translation = client.audio.translations.create(
+            model="whisper-large-v3",
+            file=(path.name, f.read()),
+            prompt="Translate this Hindi learner response into English.",
+            response_format="json",
+        )
 
-            )
+    with path.open("rb") as f:
+        transcription = client.audio.transcriptions.create(
+            model="whisper-large-v3",
+            file=(path.name, f.read()),
+            prompt="Transcribe this Hindi learner response.",
+            response_format="json",
+        )
 
-        with open(filename, "rb") as f:
-            transcription = client.audio.transcriptions.create(
-            
-                model="whisper-large-v3",
-                file=(filename, f.read()), # Required audio file
-                prompt="transcribe this users response from hindi to english, and critique on pronunciation and correctness.",  # Optional
-                #language="en", # Optional ('en' only)
-                response_format="json",  # Optional
-            # temperature=0.0  # Optional
-
-            )
-        return translation.text, transcription.text
-    ''' 
-    translation, transcription = transcribe_and_translate_audio(filename)
-    print(f"Transcription: {transcription}")
-    print(f"Translation: {translation}")
-
-    '''
+    return {
+        "ok": True,
+        "translation": translation.text,
+        "transcription": transcription.text,
+        "file": str(path),
+    }

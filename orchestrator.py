@@ -1,325 +1,168 @@
+import json
 import os
-import dotenv
-from httpx import stream
-from groq import Groq
+
 from dotenv import load_dotenv
+from groq import Groq
+
+from tools import (
+    evaluate_question,
+    generate_question,
+    get_memory,
+    save_progress,
+    speak_phrase,
+    teach_phrase,
+)
+from tools.schemas import TOOL_SCHEMAS
+
+
 load_dotenv()
 
-client = Groq(
-    api_key=os.getenv("GROQ_API_KEY"),
-)
+MODEL = os.getenv("GROQ_CHAT_MODEL", "llama-3.3-70b-versatile")
+DEFAULT_STUDENT_ID = os.getenv("LANGLEARN_STUDENT_ID", "defaultstudent")
+
+client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+SYSTEM_PROMPT = """
+You are an expert Hindi language tutor focused on spoken language learning.
+
+Core loop:
+- First inspect memory with get_memory before choosing what to teach or ask.
+- Teach useful spoken Hindi phrases with teach_phrase.
+- Play Hindi audio with speak_phrase whenever introducing or drilling a phrase.
+- Generate questions with generate_question. Use question_type='speaking' when the student should say Hindi from English, and question_type='listening' when the student should translate heard Hindi into English.
+- Evaluate attempts with evaluate_question. Speaking evaluations use an audio file and listening evaluations use the student's English response.
+
+Important rules:
+- The first tool call in a fresh conversation should be get_memory.
+- Use memory to choose beginner-friendly phrases and review weak areas.
+- The orchestrator automatically saves evaluation results, so do not call save_progress after evaluate_question.
+- Use save_progress only when you intentionally want to record a non-evaluation teaching milestone.
+- After tool calls are complete, respond to the student with a short, encouraging next step.
+- Focus on spoken language. Never require the student to type in Hindi.
+""".strip()
+
+AVAILABLE_FUNCTIONS = {
+    "get_memory": get_memory,
+    "save_progress": save_progress,
+    "teach_phrase": teach_phrase,
+    "speak_phrase": speak_phrase,
+    "generate_question": generate_question,
+    "evaluate_question": evaluate_question,
+}
+
+EVALUATION_TOOLS = {
+    "evaluate_question",
+}
 
 
-
-query = input("Say hi to start the conversation with your Hindi tutor! ")
-
-def run_conversation(query):
-    response = client.chat.completions.create(
-        messages=[
-            {   
-                
-                "role": "system",
-                "content": "You are an expert Hindi language tutor focused on spoken language learning. You operate in three modes: "
-                    "Teach Mode — call get_memory to check what the student knows, then call teach_phrase to introduce a new phrase appropriate for their level, then call speak_phrase so they can hear correct pronunciation."
-                    "Question Mode — two question types. Type 1: call generate_speaking_question to give the student an English phrase to speak back in Hindi, then call speak_phrase so they hear it first. Type 2: call generate_listening_question then call speak_phrase to play a Hindi phrase, student types the english translation"
-                    "Evaluate Mode — after every attempt call the appropriate evaluation tool to grade the response. If correct call save_progress and move on. If close retry by calling speak_phrase again. If completely wrong call teach_phrase to reteach with a full breakdown, then retry. Use the grade_pronunciation tool to evaluate pronunciation and correctness of the user's spoken response to a question."
-                    "Rules you must always follow:  Always call a tool, never respond with plain text , Always call get_memory before deciding what to teach or ask, Always call save_progress after every evaluation"
-                    "Focus entirely on spoken language, never ask the student to type in Hindi. Assume the student is an absolute beginner unless memory says otherwise. Be encouraging, patient, and specific in feedback"
-
-                    "Other relevant intructions:"
-                
-                    "The FIRST tool you must ALWAYS call is get_memory.Never call any other tool before get_memory. RIGHT AFTER you call get_memory you MUST call another tool to continue the learning"
-
-                    "When you call get_memory, use the returned information to decide what to teach or ask next. If the student's memory shows they are a beginner with no learned phrases, start with teaching a simple phrase. If they have some learned phrases, use that information to either teach a new phrase at the right level or generate an appropriate question. Always tailor your teaching and questions to the student's current knowledge as shown in their memory."
-                    "When evaluating responses, use the information in memory about the student's status on that word to provide feedback. For example, if memory shows the student struggles with saying phrase xyz, focus your feedback on that phrase(s) and consider reteaching with speak_phrase before asking them to try again."
-                    "You are either going to call a tool or return some information to the user and wait for their input before calling another tool. "
-            },
-
+def assistant_message_to_dict(message):
+    message_dict = {
+        "role": "assistant",
+        "content": message.content,
+    }
+    if message.tool_calls:
+        message_dict["tool_calls"] = [
             {
-                "role": "user",
-                "content": query,
+                "id": tool_call.id,
+                "type": tool_call.type,
+                "function": {
+                    "name": tool_call.function.name,
+                    "arguments": tool_call.function.arguments,
+                },
             }
-        ],
-        tools =[
-            {
-                "type": "function", # tool for checking the student's current knowledge
-                "function": {
-                    "name": "get_memory",
-                    "description": "Check the student's current knowledge",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "student_id": {
-                                "type": "string",
-                                "description": "The ID of the student"
-                            }
-                        },
-                        "required": []
-                    }
-                }
-            },
+            for tool_call in message.tool_calls
+        ]
+    return message_dict
 
-        #------------------------------------------------------------
 
-            {
-                "type": "function", # tool schema for saving progress after a step 
-                "function": {
-                    "name": "save_progress",
-                    "description": "Save the student's progress after an evaluation",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phrase": {
-                                "type": "string",
-                                "description": "The phrase being evaluated"
-                            },
-                            "status": {
-                                "type": "string",
-                                "enum": ["learned", "needs_review", "not_learned"],
-                                "description": "The learning status of the phrase"
-                            },
-                            "mistake_type": {
-                                "type": "string",
-                                "enum": ["pronunciation", "meaning", "none"],
-                                "description": "Type of mistake the student made if any"
-                            }
-                        },
-                        "required": ["phrase", "status"]
-                    }
-                }
-            }, 
+def execute_tool_call(tool_call):
+    function_name = tool_call.function.name
+    if function_name not in AVAILABLE_FUNCTIONS:
+        raise ValueError(f"Unknown tool call: {function_name}")
 
-            #------------------------------------------------------------
+    function_args = json.loads(tool_call.function.arguments or "{}")
+    print(f"\n[tool] {function_name}({function_args})")
+    result = AVAILABLE_FUNCTIONS[function_name](**function_args)
+    print(f"[result] {result}")
+    return function_name, result
 
-            {
-                "type": "function", # tool schema for teaching a phrase to the student
-                "function": {
-                    "name": "teach_phrase",
-                    "description": "Teach a phrase to the student",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phrase": {
-                                "type": "string",
-                                "description": "The phrase being taught"
-                            },
-                            "status": {
-                                "type": "string",
-                                "enum": ["learned", "needs_review", "not_learned"],
-                                "description": "The learning status of the phrase"
-                            }
-                        },
-                        "required": ["phrase", "status"]
-                    }
-                }
-            }, #------------------------------------------------------------
 
-            {
-                # tool schema for speaking a phrase for the user to hear
-                "type": "function", 
-                "function": {
-                    "name": "speak_phrase",
-                    "description": "Speak a phrase for the user to hear",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phrase": {
-                                "type": "string",
-                                "description": "The phrase being spoken for the user to hear"
-                            },
-                            
-                        },
-                        "required": ["phrase"]
-                    }
-                }
-            }, #------------------------------------------------------------
+def maybe_save_evaluation(function_name, result):
+    if function_name not in EVALUATION_TOOLS or not isinstance(result, dict):
+        return None
 
-            {
-                # tool schema for generating a speaking question for the user to answer
-                "type": "function", 
-                "function": {
-                    "name": "generate_speaking_question",
-                    "description": "Generate a speaking question for the user to answer",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phrase": {
-                                "type": "string",
-                                "description": "The phrase which the user will be asked to speak back in Hindi"
-                            },
-                            
-                            
-                        },
-                        "required": ["phrase"]
-                    }
-                }
-            }, #------------------------------------------------------------
+    phrase = result.get("phrase")
+    status = result.get("status")
+    if not phrase or not status:
+        return None
 
-            {
-                # tool schema for generating a listening question for the user to answer
-                "type": "function", 
-                "function": {
-                    "name": "generate_listening_question",
-                    "description": "Generate a listening question for the user to answer. It will be spoken in hindi and user responds in english",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phrase": {
-                                "type": "string",
-                                "description": "The Hindi phrase being spoken for the user to listen to and respond in English"
-                            },
-                            
-                        },
-                        "required": ["phrase"]
-                    }
-                }
-            }, #------------------------------------------------------------
-
-            {
-                # tool schema for evaluating the user's spoken response to a question
-                "type": "function", 
-                "function": {
-                    "name": "evaluate_speaking_question",
-                    "description": "Evaluate the user's spoken response to a question",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phrase": {
-                                "type": "string",
-                                "description": "The english phrase the user was asked to speak in Hindi"
-                            },
-                            "status": {
-                                "type": "string",
-                                "enum": ["learned", "needs_review", "not_learned"],
-                                "description": "The learning status of the phrase"
-                            },
-                            "file": {
-                                "type": "string",
-                                "description": "Path to the audio file containing the user's spoken response"
-                            }
-                        },
-                        "required": ["phrase", "file"]
-                    }
-                }
-            }, #------------------------------------------------------------
-
-            {
-                # tool schema for evaluating the user's translation of a spoken hindi phrase
-                "type": "function", 
-                "function": {
-                    "name": "evaluate_listening_question",
-                    "description": "Evaluate the user's translation of a spoken Hindi phrase",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phrase": {
-                                "type": "string",
-                                "description": "The Hindi phrase being spoken for the user to listen to and translate in English"
-                            },
-                            "user_response": {
-                                "type": "string",
-                                "description": "The user's translation of the spoken Hindi phrase"
-                            }
-                        },
-                        "required": ["phrase", "user_response"]
-                    }
-                }
-            }, #------------------------------------------------------------
-
-            {
-                #grade response tool schema for evalution of pronunciation and correctness of a user's spoken response to a question
-                "type": "function", 
-                "function": {
-                    "name": "grade_pronunciation",
-                    "description": "Evaluate the pronunciation and correctness of the user's spoken response to a question",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "phrase": {
-                                "type": "string",
-                                "description": "The english phrase being evaluated "
-                            },
-                            "file": {
-                                "type": "string",
-                                "description": "Path to the audio file containing the user's spoken response"
-                            },
-                            "status": {
-                                "type": "string",
-                                "enum": ["learned", "needs_review", "not_learned"],
-                                "description": "The learning status of the phrase"
-                            },
-                            
-                        },
-                        "required": ["phrase", "file", "status"]
-                    }
-                }
-            }, 
-
-        
-        ],
-        model="llama-3.3-70b-versatile", # calling our LLM
-
-        #optional parameters
-        temperature=0.1, # keep it low for testing...
-       # tool_choice = "required", # require the model to call a tool at every step, no plain text responses allowed
-    # stream=True,
-
+    return save_progress(
+        phrase=phrase,
+        status=status,
+        mistake_type=result.get("mistake_type", "none"),
+        student_id=DEFAULT_STUDENT_ID,
+        feedback=result.get("feedback"),
     )
 
-    ''' Print the incremental deltas returned by the LLM.
-    for chunk in stream:
 
-        print(chunk.choices[0].delta.content, end="")
-
-        dont print in stream just do all at once lol
-
-    '''
-
-    from tools import(get_memory, save_progress, teach_phrase, speak_phrase, generate_speaking_question, 
-                    generate_listening_question, evaluate_speaking_question, evaluate_listening_question)
-
-    # Map function names to implementations
-    available_functions = {
-        "get_memory": get_memory,
-        "save_progress": save_progress,
-        "teach_phrase": teach_phrase,
-        "speak_phrase": speak_phrase,
-        "generate_speaking_question": generate_speaking_question,
-        "generate_listening_question": generate_listening_question,
-        "evaluate_speaking_question": evaluate_speaking_question,
-        "evaluate_listening_question": evaluate_listening_question
-    }
-    import json
-
-    def execute_tool_call(tool_call):
-        """Parse and execute a single tool call"""
-        function_name = tool_call.function.name
-        function_to_call = available_functions[function_name]
-        function_args = json.loads(tool_call.function.arguments)
-        
-        print(f"Executing tool call: {function_name} with arguments {function_args}")
-
-        # Call the function 
-        return function_to_call(**function_args)
+def append_tool_result(messages, tool_call, result):
+    messages.append(
+        {
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "name": tool_call.function.name,
+            "content": json.dumps(result, ensure_ascii=False),
+        }
+    )
 
 
+def run_conversation(messages, user_input, max_tool_rounds=6):
+    messages.append({"role": "user", "content": user_input})
 
-    tools_called = response.choices[0].message.tool_calls
-    #print(tools_called)
-    result = execute_tool_call(tools_called[0]) # for now just execute the first tool call, but could loop through if multiple
-    print(result )
-    print("Done executing tool call, now testing all the tools called\n")
+    for _ in range(max_tool_rounds):
+        response = client.chat.completions.create(
+            messages=messages,
+            tools=TOOL_SCHEMAS,
+            model=MODEL,
+            temperature=0.1,
+        )
+        assistant_message = response.choices[0].message
+        messages.append(assistant_message_to_dict(assistant_message))
 
-    for tool in tools_called:
-        print(f"tool call: {tool.function.name} with arguments {tool.function.arguments}")
-        result = execute_tool_call(tool)
-        print(result)
+        if not assistant_message.tool_calls:
+            content = assistant_message.content or ""
+            if content:
+                print(f"\nTutor: {content}")
+            return content
 
-while True:
-    query = input("You: ")
+        for tool_call in assistant_message.tool_calls:
+            function_name, result = execute_tool_call(tool_call)
+            auto_save_result = maybe_save_evaluation(function_name, result)
+            if auto_save_result:
+                result = {
+                    "tool_result": result,
+                    "auto_save_result": auto_save_result,
+                }
+                print(f"[auto-save] {auto_save_result}")
+            append_tool_result(messages, tool_call, result)
 
-    resultOfPreviousToolCall = run_conversation(query)
-    
-    
+    message = "I hit the tool-call limit for this turn. Try one smaller step."
+    messages.append({"role": "assistant", "content": message})
+    print(f"\nTutor: {message}")
+    return message
 
-    run_conversation(f"This is either the result of your previous tool call or a response to you. {query}")
+
+def main():
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    print("Say hi to start the conversation with your Hindi tutor.")
+    while True:
+        query = input("\nYou: ").strip()
+        if query.lower() in {"quit", "exit"}:
+            break
+        if not query:
+            continue
+        run_conversation(messages, query)
+
+
+if __name__ == "__main__":
+    main()
