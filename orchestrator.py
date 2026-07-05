@@ -323,29 +323,3 @@ while True:
     
 
     run_conversation(f"This is either the result of your previous tool call or a response to you. {query}")
-
-
-
-
-'''
-def handle_tool_call(tool_name, tool_args):
-    if tool_name == "get_memory":
-        return get_memory(**tool_args)
-    elif tool_name == "save_progress":
-        return save_progress(**tool_args)
-    elif tool_name == "teach_phrase":
-        return teach_phrase(**tool_args)
-    elif tool_name == "speak_phrase":
-        return speak_phrase(**tool_args)
-    elif tool_name == "generate_speaking_question":
-        return generate_speaking_question(**tool_args)
-    elif tool_name == "generate_listening_question":
-        return generate_listening_question(**tool_args)
-    elif tool_name == "evaluate_speaking_question":
-        return evaluate_speaking_question(**tool_args)
-    elif tool_name == "evaluate_listening_question":
-        return evaluate_listening_question(**tool_args)
-
-    
-
-'''
