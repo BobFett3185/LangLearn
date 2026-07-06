@@ -77,7 +77,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "speak_phrase",
-            "description": "Generate and optionally play audio for a Hindi phrase.",
+            "description": "Generate and optionally play audio for exact Hindi text returned by teach_phrase or generate_question.",
             "parameters": {
                 "type": "object",
                 "properties": {

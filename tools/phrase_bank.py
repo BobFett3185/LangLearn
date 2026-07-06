@@ -1,7 +1,6 @@
 PHRASE_BANK = {
     "hello": {
         "hindi": "namaste",
-        "devanagari": "नमस्ते",
         "english": "hello",
         "breakdown": [
             "namaste means hello and is useful in almost any greeting.",
@@ -10,7 +9,6 @@ PHRASE_BANK = {
     },
     "how are you": {
         "hindi": "aap kaise hain",
-        "devanagari": "आप कैसे हैं",
         "english": "how are you",
         "breakdown": [
             "aap means you, politely.",
@@ -20,7 +18,6 @@ PHRASE_BANK = {
     },
     "i am fine": {
         "hindi": "main theek hoon",
-        "devanagari": "मैं ठीक हूँ",
         "english": "i am fine",
         "breakdown": [
             "main means I.",
@@ -30,7 +27,6 @@ PHRASE_BANK = {
     },
     "thank you": {
         "hindi": "dhanyavaad",
-        "devanagari": "धन्यवाद",
         "english": "thank you",
         "breakdown": [
             "dhanyavaad means thank you.",
@@ -39,7 +35,6 @@ PHRASE_BANK = {
     },
     "what is your name": {
         "hindi": "aapka naam kya hai",
-        "devanagari": "आपका नाम क्या है",
         "english": "what is your name",
         "breakdown": [
             "aapka means your.",
@@ -62,14 +57,12 @@ def lookup_phrase(phrase):
     for item in PHRASE_BANK.values():
         if normalized in {
             normalize_phrase(item["hindi"]),
-            normalize_phrase(item["devanagari"]),
             normalize_phrase(item["english"]),
         }:
             return item
 
     return {
         "hindi": phrase,
-        "devanagari": "",
         "english": phrase,
         "breakdown": [
             "Practice the phrase slowly first.",

@@ -8,7 +8,6 @@ def teach_phrase(phrase, status="not_learned"):
         "status": status,
         "english": entry["english"],
         "hindi": entry["hindi"],
-        "devanagari": entry["devanagari"],
         "pronunciation_tip": f"Practice saying: {entry['hindi']}",
         "breakdown": entry["breakdown"],
         "student_prompt": (
