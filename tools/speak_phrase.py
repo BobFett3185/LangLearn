@@ -11,6 +11,7 @@ load_dotenv()
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 AUDIO_DIR = ROOT_DIR / "audiofiles"
+ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
 
 
 def _safe_filename(phrase):
@@ -29,9 +30,49 @@ def _play_audio(path):
     return "Audio generated, but automatic playback is only wired for Windows right now."
 
 
+def _voice_category(voice):
+    labels = voice.get("labels") or {}
+    return str(
+        voice.get("category")
+        or labels.get("category")
+        or labels.get("use_case")
+        or ""
+    ).lower()
+
+
+def _choose_voice(client, api_key):
+    configured_voice = os.getenv("ELEVENLABS_VOICE_ID")
+    if configured_voice:
+        return configured_voice, "env"
+
+    response = client.get(
+        f"{ELEVENLABS_BASE_URL}/voices",
+        headers={"xi-api-key": api_key},
+    )
+    if response.is_error:
+        raise RuntimeError(
+            f"Could not list ElevenLabs voices: HTTP {response.status_code} {response.text}"
+        )
+
+    voices = response.json().get("voices", [])
+    usable_voices = [
+        voice
+        for voice in voices
+        if _voice_category(voice) not in {"library", "professional", "cloned"}
+    ]
+    if not usable_voices:
+        usable_voices = voices
+    if not usable_voices:
+        raise RuntimeError(
+            "No ElevenLabs voices are available for this API key. Create or add a voice in your ElevenLabs workspace, then set ELEVENLABS_VOICE_ID."
+        )
+
+    voice = usable_voices[0]
+    return voice["voice_id"], f"auto:{voice.get('name', voice['voice_id'])}"
+
+
 def speak_phrase(phrase, play_audio=True):
     api_key = os.getenv("ELEVENLABS_API_KEY")
-    voice_id = os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")
     AUDIO_DIR.mkdir(exist_ok=True)
     output_path = AUDIO_DIR / f"{_safe_filename(phrase)}.mp3"
 
@@ -44,7 +85,6 @@ def speak_phrase(phrase, play_audio=True):
             "playback_started": False,
         }
 
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
     payload = {
         "text": phrase,
         "model_id": os.getenv("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2"),
@@ -61,8 +101,22 @@ def speak_phrase(phrase, play_audio=True):
 
     try:
         with httpx.Client(timeout=30.0) as client:
+            voice_id, voice_source = _choose_voice(client, api_key)
+            url = f"{ELEVENLABS_BASE_URL}/text-to-speech/{voice_id}"
             response = client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
+            if response.is_error:
+                return {
+                    "message": (
+                        f"Could not generate speech audio: HTTP {response.status_code}"
+                    ),
+                    "phrase": phrase,
+                    "audio_file": None,
+                    "audio_generated": False,
+                    "playback_started": False,
+                    "voice_id": voice_id,
+                    "voice_source": voice_source,
+                    "elevenlabs_error": response.text,
+                }
         output_path.write_bytes(response.content)
     except Exception as exc:
         return {
@@ -89,5 +143,7 @@ def speak_phrase(phrase, play_audio=True):
         "audio_generated": True,
         "playback_started": playback_started,
         "playback_message": playback_message,
+        "voice_id": voice_id,
+        "voice_source": voice_source,
     }
 
